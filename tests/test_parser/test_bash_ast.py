@@ -56,10 +56,14 @@ def test_hash_mid_word_is_not_a_comment():
     assert parsed.arrays["source"] == ["foo#bar", "baz"]
 
 
-def test_hash_after_quoted_word_is_not_a_comment():
-    # No whitespace between the closing quote and the `#` means it's still the
-    # same word -- e.g. a quoted git source with a `#tag=` fragment.
-    source = 'source=("git+https://example.com/foo.git#tag=v1.0")\nbuild() {\n  true\n}\n'
+def test_hash_immediately_after_closing_quote_is_not_a_comment():
+    # No whitespace between the closing quote and an *unquoted* `#` means it's
+    # still the same word -- e.g. a git source's `#tag=` fragment tacked on
+    # right after a quoted URL, with no space. This exercises the unquoted
+    # `c == "#" and at_word_start` branch reached right after a dquote closes
+    # (at_word_start must still be False there), not the in_dquote branch --
+    # verified against real bash: `("url"#tag=v1.0)` keeps them as one word.
+    source = 'source=("git+https://example.com/foo.git"#tag=v1.0)\nbuild() {\n  true\n}\n'
     parsed = parse_script(source)
     assert parsed.parse_error is None
     assert parsed.arrays["source"] == ["git+https://example.com/foo.git#tag=v1.0"]
@@ -67,3 +71,34 @@ def test_hash_after_quoted_word_is_not_a_comment():
 
 def test_split_array_elements_hash_mid_word_is_not_a_comment():
     assert split_array_elements("foo#bar baz") == ["foo#bar", "baz"]
+
+
+def test_escaped_space_does_not_break_word_boundary_tracking():
+    # An unquoted backslash-escaped space is part of the current word, not a
+    # real separator -- so a `#` right after one must NOT be treated as
+    # starting a comment. Verified against real bash: `(foo\ #bar baz)`
+    # keeps "foo #bar" as one element, "baz" as the next.
+    assert split_array_elements("foo\\ #bar baz") == ["foo #bar", "baz"]
+    source = "source=(foo\\ #bar baz)\nbuild() {\n  true\n}\n"
+    parsed = parse_script(source)
+    assert parsed.parse_error is None
+    assert parsed.arrays["source"] == ["foo #bar", "baz"]
+
+
+def test_escaped_paren_does_not_perturb_array_depth():
+    # An unquoted backslash-escaped paren is a literal character, not a real
+    # delimiter -- must not be counted toward the array's depth. Verified
+    # against real bash: `(foo\)bar baz)` keeps "foo)bar" as one element.
+    assert split_array_elements("foo\\)bar baz") == ["foo)bar", "baz"]
+    source = "source=(foo\\)bar baz)\nbuild() {\n  true\n}\n"
+    parsed = parse_script(source)
+    assert parsed.parse_error is None
+    assert parsed.arrays["source"] == ["foo)bar", "baz"]
+
+
+def test_backslash_newline_line_continuation_joins_with_no_word_break():
+    # A backslash immediately before a newline is a line continuation: it
+    # vanishes entirely and joins the following text onto the current word
+    # with no separator. Verified against real bash: `(foo\<newline>bar)`
+    # produces the single element "foobar".
+    assert split_array_elements("foo\\\nbar baz") == ["foobar", "baz"]

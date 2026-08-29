@@ -67,6 +67,23 @@ def strip_array_literals(source: str) -> tuple[str, dict[str, str]]:
                     in_dquote = False
                 j += 1
                 continue
+            if c == "\\":
+                # Unquoted backslash: bash takes the following character
+                # (whitespace, '#', a paren, anything) as a plain literal,
+                # still part of the current word -- except a backslash right
+                # before a newline, a line continuation that vanishes
+                # entirely and joins the following text with no word break
+                # at all. Verified against real bash for both cases. Must be
+                # handled before the whitespace/'#'/paren checks below, or an
+                # escaped space (e.g. `foo\ #bar`) is wrongly treated as a
+                # real word boundary, making the following '#' misfire as a
+                # comment start.
+                if j + 1 < n and source[j + 1] == "\n":
+                    j += 2
+                else:
+                    at_word_start = False
+                    j += 2
+                continue
             if c in " \t\n":
                 at_word_start = True
                 j += 1
@@ -138,6 +155,22 @@ def split_array_elements(inner: str) -> list[str]:
             if c == '"':
                 in_dquote = False
                 i += 1
+                continue
+            buf.append(c)
+            i += 1
+            continue
+        if c == "\\":
+            # Same unquoted-backslash handling as strip_array_literals()
+            # above: the following character is a literal, part of the
+            # current element, except a backslash-newline line continuation,
+            # which vanishes with no word break.
+            if i + 1 < n and inner[i + 1] == "\n":
+                i += 2
+                continue
+            if i + 1 < n:
+                buf.append(inner[i + 1])
+                at_word_start = False
+                i += 2
                 continue
             buf.append(c)
             i += 1
