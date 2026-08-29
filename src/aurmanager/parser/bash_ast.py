@@ -54,6 +54,16 @@ def strip_array_literals(source: str) -> tuple[str, dict[str, str]]:
                     j += 1
                 elif c == '"':
                     in_dquote = False
+            elif c == "#":
+                # A `#` outside any quote starts a comment running to end of
+                # line, same as split_array_elements() below treats it --
+                # bash ignores comment content entirely, so an unbalanced
+                # paren inside one (e.g. a ":)" smiley) must not perturb
+                # depth, or it desyncs this array literal's closing ')' from
+                # its real position.
+                nl = source.find("\n", j)
+                j = nl if nl != -1 else n
+                continue
             else:
                 if c == "'":
                     in_squote = True
