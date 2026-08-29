@@ -43,36 +43,47 @@ def strip_array_literals(source: str) -> tuple[str, dict[str, str]]:
         j = m.end()  # position just after the opening '('
         depth = 1
         in_squote = in_dquote = False
+        # Bash only starts a `#` comment when the `#` is the first character
+        # of a word (preceded by whitespace, or at the very start of the
+        # array) -- a `#` glued onto other text, e.g. an element like
+        # `foo#bar` or a quoted `"...#tag=v1"` git-source fragment, is just
+        # part of that word. Tracked so an unbalanced paren inside a real
+        # comment (e.g. a ":)" smiley) doesn't perturb depth, while a mid-word
+        # `#` is correctly NOT treated as a comment (verified against real
+        # bash: `a=(foo#bar baz)` keeps "foo#bar" as one element).
+        at_word_start = True
         start_inner = j
         while j < n and depth > 0:
             c = source[j]
             if in_squote:
                 if c == "'":
                     in_squote = False
-            elif in_dquote:
+                j += 1
+                continue
+            if in_dquote:
                 if c == "\\":
                     j += 1
                 elif c == '"':
                     in_dquote = False
-            elif c == "#":
-                # A `#` outside any quote starts a comment running to end of
-                # line, same as split_array_elements() below treats it --
-                # bash ignores comment content entirely, so an unbalanced
-                # paren inside one (e.g. a ":)" smiley) must not perturb
-                # depth, or it desyncs this array literal's closing ')' from
-                # its real position.
+                j += 1
+                continue
+            if c in " \t\n":
+                at_word_start = True
+                j += 1
+                continue
+            if c == "#" and at_word_start:
                 nl = source.find("\n", j)
                 j = nl if nl != -1 else n
                 continue
-            else:
-                if c == "'":
-                    in_squote = True
-                elif c == '"':
-                    in_dquote = True
-                elif c == "(":
-                    depth += 1
-                elif c == ")":
-                    depth -= 1
+            at_word_start = False
+            if c == "'":
+                in_squote = True
+            elif c == '"':
+                in_dquote = True
+            elif c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
             j += 1
         if depth > 0:
             # Ran off the end of the file without a matching ')' -- e.g. an
@@ -104,6 +115,10 @@ def split_array_elements(inner: str) -> list[str]:
     elements: list[str] = []
     buf: list[str] = []
     in_squote = in_dquote = False
+    # Same word-boundary rule as strip_array_literals() above: `#` only starts
+    # a comment as the first character of a word, not glued onto other text
+    # (e.g. `foo#bar` is one element, not `foo` followed by a comment).
+    at_word_start = True
     i = 0
     n = len(inner)
     while i < n:
@@ -131,14 +146,16 @@ def split_array_elements(inner: str) -> list[str]:
             if buf:
                 elements.append("".join(buf))
                 buf = []
+            at_word_start = True
             i += 1
             continue
-        if c == "#":
+        if c == "#" and at_word_start:
             nl = inner.find("\n", i)
             if nl == -1:
                 break
             i = nl
             continue
+        at_word_start = False
         if c == "'":
             in_squote = True
             i += 1
