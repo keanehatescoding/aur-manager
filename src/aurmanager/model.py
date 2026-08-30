@@ -65,6 +65,11 @@ class RuleContext:
     pkgname: str | None = None
     pkgver: str | None = None
     sources: list[str] = field(default_factory=list)
+    # (start, end) character offsets in `source`, one per source=()/source_<arch>=()
+    # array-literal occurrence -- lets a rule locate a specific source entry's
+    # real line by searching only within these spans. See
+    # rules/integrity.py:_line_for_source_entry.
+    source_spans: list[tuple[int, int]] = field(default_factory=list)
     checksums: dict[str, list[str]] = field(default_factory=dict)  # e.g. {"sha256sums": [...]}
 
     # A sibling .SRCINFO's pkgbase-level source/checksum arrays, if the file
@@ -89,6 +94,10 @@ class RuleContext:
 @dataclass
 class ScanResult:
     findings: list[Finding] = field(default_factory=list)
+    # The parsed PKGBUILD RuleContext scan() already built, exposed so callers
+    # that also need structured PKGBUILD data (e.g. diffscan.py's function/
+    # source diffing) can reuse it instead of parsing the same file again.
+    pkgbuild_ctx: RuleContext | None = None
 
     @property
     def overall_verdict(self) -> Severity:

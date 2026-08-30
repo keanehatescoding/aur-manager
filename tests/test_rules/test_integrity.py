@@ -96,6 +96,28 @@ def test_int002_fires_on_compound_vcs_scheme_with_raw_ip(make_pkgbuild_ctx):
     assert len(list(INT002SuspiciousSourceHost().check(ctx))) == 1
 
 
+def test_int002_reports_the_source_array_line_not_an_earlier_duplicate_occurrence(make_pkgbuild_ctx):
+    # Regression for GH issue #13: an earlier, unrelated occurrence of the same
+    # string (e.g. quoted in a comment) must not hijack the reported line --
+    # only the real source=() entry should be located.
+    ctx = make_pkgbuild_ctx(
+        """
+        # mirrored from https://pastebin.com/raw/AbCdEfGh, see changelog
+        pkgname=foo
+        source=("https://pastebin.com/raw/AbCdEfGh")
+        sha256sums=('abc')
+        """
+    )
+    findings = list(INT002SuspiciousSourceHost().check(ctx))
+    assert len(findings) == 1
+    source_line = next(
+        i
+        for i, line in enumerate(ctx.source.splitlines(), start=1)
+        if line.strip().startswith("source=")
+    )
+    assert findings[0].line == source_line
+
+
 def test_int003_fires_on_skip_for_plain_network_tarball(make_pkgbuild_ctx):
     ctx = make_pkgbuild_ctx(
         """

@@ -49,6 +49,19 @@ def _merge_arch_variants(arrays: dict[str, list[str]], base_key: str, arch_suffi
     return combined
 
 
+def _merge_arch_variant_spans(
+    array_spans: dict[str, list[tuple[int, int]]], base_key: str, arch_suffixes: list[str]
+) -> list[tuple[int, int]]:
+    """Same merge as _merge_arch_variants(), but over the base/arch arrays' raw
+    source-character spans rather than their parsed element values -- gives
+    rules/integrity.py the real on-disk locations of source=()/source_<arch>=()
+    to search within, instead of the whole file."""
+    combined = list(array_spans.get(base_key, []))
+    for arch in arch_suffixes:
+        combined += array_spans.get(f"{base_key}_{arch}", [])
+    return combined
+
+
 def parse_pkgbuild(path: Path) -> RuleContext:
     source = path.read_text(errors="replace")
     parsed = parse_script(source)
@@ -75,6 +88,7 @@ def parse_pkgbuild(path: Path) -> RuleContext:
     arch_suffixes = sorted(set(parsed.arrays.get("arch", [])))
 
     sources = _merge_arch_variants(parsed.arrays, "source", arch_suffixes)
+    source_spans = _merge_arch_variant_spans(parsed.array_spans, "source", arch_suffixes)
     checksums = {
         key: merged
         for key in CHECKSUM_KEYS
@@ -111,6 +125,7 @@ def parse_pkgbuild(path: Path) -> RuleContext:
         pkgname=pkgname,
         pkgver=scalars.get("pkgver"),
         sources=sources,
+        source_spans=source_spans,
         checksums=checksums,
         functions=functions,
         module_scope=module_scope,

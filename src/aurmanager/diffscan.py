@@ -7,7 +7,6 @@ from pathlib import Path
 from .engine import scan
 from .loader import resolve
 from .model import Finding, RuleContext, ScanResult, Severity
-from .parser.pkgbuild import parse_pkgbuild
 from .rules.base import Rule
 
 
@@ -99,8 +98,11 @@ def diff_scan(old_path: Path, new_path: Path, rules: list[type[Rule]] | None = N
     resolved_findings = [f for f in old_result.findings if _fingerprint(f) not in new_fp]
     carried_findings = [f for f in new_result.findings if _fingerprint(f) in old_fp]
 
-    old_ctx = parse_pkgbuild(old_files.pkgbuild)
-    new_ctx = parse_pkgbuild(new_files.pkgbuild)
+    # scan() already parsed each PKGBUILD once to build its RuleContext (needed
+    # to run rules against it) -- reuse that instead of parsing both files a
+    # second time just for function/source diffing.
+    old_ctx = old_result.pkgbuild_ctx
+    new_ctx = new_result.pkgbuild_ctx
 
     old_functions = set(old_ctx.functions)
     new_functions_set = set(new_ctx.functions)

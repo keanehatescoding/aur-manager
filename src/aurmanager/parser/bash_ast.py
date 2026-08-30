@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterator
 
 import bashlex
@@ -10,7 +10,7 @@ from bashlex import errors as bashlex_errors
 _ARRAY_ASSIGN_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\+?=\(")
 
 
-def strip_array_literals(source: str) -> tuple[str, dict[str, str]]:
+def strip_array_literals(source: str) -> tuple[str, dict[str, str], dict[str, list[tuple[int, int]]]]:
     """bashlex cannot parse bash array-literal assignments (`name=(...)`) anywhere in
     a script, and a single occurrence aborts parsing of the *entire* file rather than
     just that statement (verified empirically: bashlex.parse() is all-or-nothing).
@@ -27,8 +27,17 @@ def strip_array_literals(source: str) -> tuple[str, dict[str, str]]:
     is returned separately, to be split into elements by split_array_elements() --
     array contents are declarative data, not control flow, so they don't need a full
     bash AST.
+
+    Also returns, per array name, the (start, end) character offset of each
+    occurrence's raw inner text in the original source -- callers that need to
+    locate a specific element's line (e.g. rules/integrity.py's INT002/INT003)
+    can then search only within these real array-literal spans instead of the
+    whole file, where an identical string could coincidentally appear earlier
+    for an unrelated reason (a comment, a changelog block) and report the
+    wrong line.
     """
     extracted: dict[str, str] = {}
+    spans: dict[str, list[tuple[int, int]]] = {}
     out: list[str] = []
     n = len(source)
     last = 0
@@ -117,12 +126,18 @@ def strip_array_literals(source: str) -> tuple[str, dict[str, str]]:
             # depends+=('foo') should append to the array, not replace it -- common
             # in PKGBUILDs for arch-conditional dependency lists.
             extracted[name] = extracted[name] + " " + inner
+            spans.setdefault(name, []).append((start_inner, j - 1))
         else:
+            # A plain (non-append) reassignment replaces the array outright, so
+            # its span history must be reset too -- otherwise a later rule could
+            # still search inside an earlier, overwritten occurrence's span and
+            # report a line from an array that's no longer in effect.
             extracted[name] = inner
+            spans[name] = [(start_inner, j - 1)]
         replaced_span = source[m.start() : j]
         out.append("".join(ch if ch == "\n" else " " for ch in replaced_span))
         last = j
-    return "".join(out), extracted
+    return "".join(out), extracted, spans
 
 
 def split_array_elements(inner: str) -> list[str]:
@@ -210,11 +225,12 @@ class ParsedScript:
     ast_nodes: list[Any]
     arrays: dict[str, list[str]]
     parse_error: str | None
+    array_spans: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
 
 
 def parse_script(source: str) -> ParsedScript:
     try:
-        cleaned, raw_arrays = strip_array_literals(source)
+        cleaned, raw_arrays, array_spans = strip_array_literals(source)
         arrays = {name: split_array_elements(inner) for name, inner in raw_arrays.items()}
     except Exception as e:
         # e.g. an unterminated quote inside an array literal. Must degrade to a
@@ -226,9 +242,13 @@ def parse_script(source: str) -> ParsedScript:
 
     try:
         nodes = list(bashlex.parse(cleaned))
-        return ParsedScript(source=source, ast_nodes=nodes, arrays=arrays, parse_error=None)
+        return ParsedScript(
+            source=source, ast_nodes=nodes, arrays=arrays, parse_error=None, array_spans=array_spans
+        )
     except bashlex_errors.ParsingError as e:
-        return ParsedScript(source=source, ast_nodes=[], arrays=arrays, parse_error=str(e))
+        return ParsedScript(
+            source=source, ast_nodes=[], arrays=arrays, parse_error=str(e), array_spans=array_spans
+        )
     except Exception as e:
         # bashlex doesn't only raise ParsingError for unsupported input -- e.g.
         # arithmetic expansion $((...)) raises a bare NotImplementedError from deep
@@ -236,7 +256,11 @@ def parse_script(source: str) -> ParsedScript:
         # adversarial/malformed input by design: any parse failure must degrade to
         # a reported parse_error (surfaced by rules/meta.py), never crash the scan.
         return ParsedScript(
-            source=source, ast_nodes=[], arrays=arrays, parse_error=f"{type(e).__name__}: {e}"
+            source=source,
+            ast_nodes=[],
+            arrays=arrays,
+            parse_error=f"{type(e).__name__}: {e}",
+            array_spans=array_spans,
         )
 
 

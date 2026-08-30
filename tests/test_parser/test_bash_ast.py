@@ -96,6 +96,28 @@ def test_escaped_paren_does_not_perturb_array_depth():
     assert parsed.arrays["source"] == ["foo)bar", "baz"]
 
 
+def test_array_spans_reset_on_plain_reassignment_not_accumulated():
+    # A plain (non-append) reassignment replaces the array outright, so its
+    # span history must be reset too -- otherwise a rule could still search
+    # inside an earlier, overwritten occurrence's span (e.g. via
+    # rules/integrity.py's _line_for_source_entry) and report a stale line.
+    source = "source=('old')\nsource=('new')\nbuild() {\n  true\n}\n"
+    parsed = parse_script(source)
+    assert parsed.parse_error is None
+    assert parsed.arrays["source"] == ["new"]
+    assert len(parsed.array_spans["source"]) == 1
+    start, end = parsed.array_spans["source"][0]
+    assert source[start:end] == "'new'"
+
+
+def test_array_spans_accumulate_on_append():
+    source = "depends=('a')\ndepends+=('b')\nbuild() {\n  true\n}\n"
+    parsed = parse_script(source)
+    assert parsed.parse_error is None
+    assert parsed.arrays["depends"] == ["a", "b"]
+    assert len(parsed.array_spans["depends"]) == 2
+
+
 def test_backslash_newline_line_continuation_joins_with_no_word_break():
     # A backslash immediately before a newline is a line continuation: it
     # vanishes entirely and joins the following text onto the current word
