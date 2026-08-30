@@ -122,13 +122,18 @@ def strip_array_literals(source: str) -> tuple[str, dict[str, str], dict[str, li
                 f"{source.count(chr(10), 0, m.start()) + 1}"
             )
         inner = source[start_inner : j - 1]
-        spans.setdefault(name, []).append((start_inner, j - 1))
         if is_append and name in extracted:
             # depends+=('foo') should append to the array, not replace it -- common
             # in PKGBUILDs for arch-conditional dependency lists.
             extracted[name] = extracted[name] + " " + inner
+            spans.setdefault(name, []).append((start_inner, j - 1))
         else:
+            # A plain (non-append) reassignment replaces the array outright, so
+            # its span history must be reset too -- otherwise a later rule could
+            # still search inside an earlier, overwritten occurrence's span and
+            # report a line from an array that's no longer in effect.
             extracted[name] = inner
+            spans[name] = [(start_inner, j - 1)]
         replaced_span = source[m.start() : j]
         out.append("".join(ch if ch == "\n" else " " for ch in replaced_span))
         last = j
