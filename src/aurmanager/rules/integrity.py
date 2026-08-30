@@ -61,10 +61,16 @@ _PASTE_HOSTS = {
 
 
 def _line_for_source_entry(ctx: RuleContext, src: str) -> tuple[int | None, str | None]:
-    idx = ctx.source.find(src)
-    if idx == -1:
-        return None, None
-    return line_and_snippet(idx, ctx.source)
+    """Search only within the real source=()/source_<arch>=() array-literal
+    spans, not the whole file -- a plain ctx.source.find(src) can match an
+    earlier, unrelated occurrence of the same string (e.g. quoted in a
+    comment or a changelog block above source=()), reporting the wrong line
+    to a reviewer even though detection itself is unaffected."""
+    for start, end in ctx.source_spans:
+        idx = ctx.source.find(src, start, end)
+        if idx != -1:
+            return line_and_snippet(idx, ctx.source)
+    return None, None
 
 
 class INT001PkgverNetworkCall(Rule):
