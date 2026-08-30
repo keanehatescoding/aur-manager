@@ -10,7 +10,8 @@ from .rules.base import Rule
 
 
 def scan(files: PackageFiles, rules: list[type[Rule]] | None = None) -> ScanResult:
-    contexts: list[RuleContext] = [parse_pkgbuild(files.pkgbuild)]
+    pkgbuild_ctx = parse_pkgbuild(files.pkgbuild)
+    contexts: list[RuleContext] = [pkgbuild_ctx]
     for install_path in files.install_scripts:
         contexts.append(parse_install_script(install_path))
     for patch_path in files.patches:
@@ -23,4 +24,4 @@ def scan(files: PackageFiles, rules: list[type[Rule]] | None = None) -> ScanResu
         for rule_cls in active_rules:
             findings.extend(rule_cls().check(ctx))
 
-    return ScanResult(findings=findings)
+    return ScanResult(findings=findings, pkgbuild_ctx=pkgbuild_ctx)

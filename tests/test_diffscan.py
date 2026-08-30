@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import aurmanager.engine as engine_module
 from aurmanager.diffscan import diff_scan
 from aurmanager.model import Severity
+from aurmanager.parser.pkgbuild import parse_pkgbuild
 
 
 def _write(tmp_path, name, body):
@@ -168,6 +170,43 @@ def test_diff_detects_new_function_and_weakened_checksum(tmp_path):
     diff = diff_scan(old, new)
     assert diff.new_functions == ["post_install"]
     assert diff.weakened_checksum_sources == ["https://example.com/$pkgname-$pkgver.tar.gz"]
+
+
+def test_diff_scan_parses_each_pkgbuild_only_once(tmp_path, monkeypatch):
+    # Regression for GH issue #12: diff_scan() used to call parse_pkgbuild() a
+    # second time per file (once inside scan(), once again directly) just to
+    # get function/source diffing data -- it should reuse the RuleContext
+    # scan() already built instead of parsing each file twice.
+    calls: list[str] = []
+
+    def counting_parse_pkgbuild(path):
+        calls.append(str(path))
+        return parse_pkgbuild(path)
+
+    monkeypatch.setattr(engine_module, "parse_pkgbuild", counting_parse_pkgbuild)
+
+    old = _write(
+        tmp_path,
+        "old",
+        """
+        pkgname=foo
+        pkgver=1.0
+        source=("https://example.com/$pkgname-$pkgver.tar.gz")
+        sha256sums=('deadbeef')
+        """,
+    )
+    new = _write(
+        tmp_path,
+        "new",
+        """
+        pkgname=foo
+        pkgver=1.1
+        source=("https://example.com/$pkgname-$pkgver.tar.gz")
+        sha256sums=('cafebabe')
+        """,
+    )
+    diff_scan(old, new)
+    assert len(calls) == 2
 
 
 def test_diff_json_applies_severity_min_to_resolved_findings_too(tmp_path):
